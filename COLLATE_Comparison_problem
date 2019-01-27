@@ -16,7 +16,7 @@ DECLARE @stop bit
 IF OBJECT_ID('tempdb..#usernames') is NOT NULL
 DROP TABLE #usernames
 CREATE TABLE #usernames
-([sqlLogin] nvarchar (50) COLLATE CATALOG_DEFAULT,)
+([sqlLogin] nvarchar (50) COLLATE CATALOG_DEFAULT)
 INSERT INTO #userNames
 SELECT [sqlLogin] FROM [dbo].[LoginsReference]
 
