@@ -1,0 +1,31 @@
+/* This is an interesting problem I ran across while trying to do some work in a collated database. 
+The SQLLogin column on the LoginsReference table is nvarchar(50) (yes, it should be sysname)
+When trying to see if [name] from the sys.sysusers table existed in the LoginsReference table, I got the following error:
+
+--Cannot resolve the collation conflict between "SQL_Latin1_General_CP1_CI_AS" and "Latin1_General_100_CI_AS_KS_WS_SC" in the equal to operation.
+
+My temporary solution is to leverage implicit conversion to insert the SQLLogins FROM LoginsReference into a temp table that is properly collated, and use it for the comparison operator.
+Long term solution is to properly collate things in tables.  However, there is a lot of dynamic SQL involved and I'm worried there will be many more issues with other comparisons made in stored procedures elsewhere.  We'll see.
+*/
+--this is a script to clean out users created in testing and also reset all tables involved in testing.
+USE [_Contained Database]
+DECLARE @UUID smallint
+DECLARE @SQL nvarchar(max)
+DECLARE @loginname nvarchar (20)
+DECLARE @stop bit
+IF OBJECT_ID('tempdb..#usernames') is NOT NULL
+DROP TABLE #usernames
+CREATE TABLE #usernames
+([sqlLogin] nvarchar (50) COLLATE CATALOG_DEFAULT,)
+INSERT INTO #userNames
+SELECT [sqlLogin] FROM [dbo].[LoginsReference]
+
+
+WHILE EXISTS (SELECT TOP 1 [UID] FROM sys.sysusers WHERE [uid] BETWEEN 5 and 16000 and [name] in (SELECT [sqlLogin] FROM #usernames))
+BEGIN
+	SELECT TOP 1 @loginname = [name] FROM sys.sysusers WHERE [uid] BETWEEN 5 and 16000 and [name] in (SELECT [sqlLogin] FROM #usernames)
+	SELECT @SQL = 'DROP USER ' + @loginname
+	exec sp_executesql @sql
+END
+TRUNCATE TABLE [dbo].[LoginRoles]
+TRUNCATE TABLE [dbo].[LoginsReference]
