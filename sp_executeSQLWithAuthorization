@@ -1,0 +1,60 @@
+--sp_requestAuthorizationThenDo
+--Lately, I've been finding that if I write the shell, separate from the code, my success rate and develop speed increase. 
+--This code is designed to execute first to return code that the user or calling application can then resubmit to the procedure to get it to execute successfully. In a large platform, where lots of people have access to your code base, you may want an extra layer of authorization.
+--This is a framework to force an authorization code to be generated.  The idea is to embed this in a stored procedure so that the stored procedure can't be executed without someone really being very intentional about it.  It acts as a safety switch.
+-- INstead of having an exeute SQL
+CREATE PROCEDURE sp_generateNewRandomAuthCode
+AS
+BEGIN
+
+	IF object_id('RandomAuthValueTable') IS NOT NULL DROP TABLE RandomAuthValueTable
+
+	CREATE TABLE RandomAuthValueTable 
+	(
+	RandomAuthCode uniqueidentifier
+	)
+
+	INSERT INTO RandomAuthValueTable
+	SELECT NEWID()
+END
+GO
+CREATE or alter FUNCTION fn_GetRandomAuthCode ()
+RETURNS uniqueidentifier
+AS
+BEGIN
+DECLARE @randomAuthCode uniqueidentifier
+	IF object_id('RandomAuthValueTable') IS NOT NULL
+	SELECT @randomAuthCode = RandomAuthCode FROM dbo.RandomAuthValueTable
+	RETURN (@randomAuthCode)
+END
+GO
+--Now create a stored procedure that uses the authcode
+CREATE OR ALTER Procedure sp_executeSQLWithAuthorization
+@SQL nvarchar (max)
+,@Message nvarchar (max) = '' output
+,@userAuthCode uniqueidentifier = NULL output
+AS 
+DECLARE @extantAuthcode uniqueidentifier = NULL
+
+SELECT @extantAuthcode = dbo.fn_GetRandomAuthCode()
+
+IF @userAuthcode = @extantAuthcode
+BEGIN
+	EXEC sp_executeSQL @SQL
+	PRINT 'success, your authorized action was peformed'
+	EXEC sp_generateNewRandomAuthCode
+END
+ELSE
+BEGIN
+	EXEC sp_generateNewRandomAuthCode
+	SELECT @extantAuthcode = dbo.fn_GetRandomAuthCode() 
+	SET @Message = '--WARNING: The procedure you are attempting to execute has been embedded with an authorization code.
+			If you wish to continue with this nonsense, you must add the following code to your call in the "@userAuthCode = ' + cast(@extantAuthcode as nvarchar (128)) + ' parameter.'
+	SET @userAuthCode = @extantAuthcode
+END
+GO
+--SAMPLE IMPLEMENTATION
+DECLARE @authCode uniqueidentifier
+DECLARE @SQL nvarchar (max) = 'SELECT Top 1 * from sys.databases'
+EXEC sp_executeSQLWithAuthorization @sql = @SQL,  @userAuthCode = @authCode OUTPUT
+EXEC sp_executeSQLWithAuthorization @sql = @SQL,  @userAuthCode = @authCode 
