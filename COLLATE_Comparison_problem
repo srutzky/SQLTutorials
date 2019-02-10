@@ -4,28 +4,59 @@ When trying to see if [name] from the sys.sysusers table existed in the LoginsRe
 
 --Cannot resolve the collation conflict between "SQL_Latin1_General_CP1_CI_AS" and "Latin1_General_100_CI_AS_KS_WS_SC" in the equal to operation.
 
-My temporary solution is to leverage implicit conversion to insert the SQLLogins FROM LoginsReference into a temp table that is properly collated, and use it for the comparison operator.
+My temporary solution is to do one of the following:
+  OPTION 1: specify the collation for the [dbo].[LoginsReference].[sqlLogin] column in the query, using "COLLATE CATALOG_DEFAULT".
+  OPTION 2: use a cursor to get the login names in a single pass, and remove the collation conflict by placing the name into a variable.
+
 Long term solution is to properly collate things in tables.  However, there is a lot of dynamic SQL involved and I'm worried there will be many more issues with other comparisons made in stored procedures elsewhere.  We'll see.
 */
 --this is a script to clean out users created in testing and also reset all tables involved in testing.
-USE [_Contained Database]
-DECLARE @UUID smallint
-DECLARE @SQL nvarchar(max)
-DECLARE @loginname nvarchar (20)
-DECLARE @stop bit
-IF OBJECT_ID('tempdb..#usernames') is NOT NULL
-DROP TABLE #usernames
-CREATE TABLE #usernames
-([sqlLogin] nvarchar (50) COLLATE CATALOG_DEFAULT)
-INSERT INTO #userNames
-SELECT [sqlLogin] FROM [dbo].[LoginsReference]
+USE [_Contained Database];
+DECLARE @SQL nvarchar(max);
+DECLARE @LoginName sysname; -- only used in Option 2
 
 
-WHILE EXISTS (SELECT TOP 1 [UID] FROM sys.sysusers WHERE [uid] BETWEEN 5 and 16000 and [name] in (SELECT [sqlLogin] FROM #usernames))
+-- OPTION 1 (preferred):
+SET @SQL = N'';
+
+SELECT @SQL = @SQL + N'DROP USER ' + QUOTENAME(usr.[name]) + N';' + NCHAR(13) + NCHAR(10)
+FROM   sys.database_principals usr
+INNER JOIN [dbo].[LoginsReference] lgn
+        ON lgn.[sqlLogin] COLLATE CATALOG_DEFAULT = usr.[name]
+WHERE  usr.[principal_id] BETWEEN 5 AND 16000;
+
+EXEC sp_executesql @SQL;
+
+
+
+-- OPTION 2:
+DECLARE LoginCurs CURSOR LOCAL READ_ONLY FORWARD_ONLY FAST_FORWARD
+FOR     SELECT [sqlLogin]
+        FROM   [dbo].[LoginsReference];
+
+OPEN LoginCurs;
+
+FETCH NEXT
+FROM  LoginCurs
+INTO  @LoginName;
+
+WHILE (@@FETCH_STATUS = 0)
 BEGIN
-	SELECT TOP 1 @loginname = [name] FROM sys.sysusers WHERE [uid] BETWEEN 5 and 16000 and [name] in (SELECT [sqlLogin] FROM #usernames)
-	SELECT @SQL = 'DROP USER ' + @loginname
-	exec sp_executesql @sql
-END
-TRUNCATE TABLE [dbo].[LoginRoles]
-TRUNCATE TABLE [dbo].[LoginsReference]
+    IF (EXISTS (SELECT *
+                FROM   sys.database_principals
+                WHERE  [principal_id] BETWEEN 5 AND 16000
+                AND    [name] = @LoginName
+               ))
+    BEGIN
+        SET @SQL = N'DROP USER ' + QUOTENAME(@LoginName)
+        EXEC (@SQL);
+    END;
+
+    FETCH NEXT
+    FROM  LoginCurs
+    INTO  @LoginName;
+END;
+
+CLOSE LoginCurs;
+DEALLOCATE LoginCurs;
+
